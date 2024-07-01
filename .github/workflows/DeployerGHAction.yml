@@ -1,0 +1,53 @@
+name: DeployerGHAction
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Choose environment to deploy to'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+          - staging
+          - production
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    env:
+      STAGING_DB: $(cat config-example/dbs/db_stg.yaml | yq e '.database.hosts' -)
+      PRODUCTION_DB: $(cat config-example/dbs/db_prod.yaml | yq e '.database.hosts' -)
+      
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.8'
+    
+    - name: Install yq
+      run: sudo apt-get install -y yq
+
+    - name: Set database configuration
+      run: |
+        if [ "${{ github.event.inputs.environment }}" == "production" ]; then
+          DB_HOST=$PRODUCTION_DB
+        else
+          DB_HOST=$STAGING_DB
+        fi
+        yq e ".database.hosts = \"$DB_HOST\"" -i config-example/apps/web.yaml
+
+    - name: Deploy to EC2
+      env:
+        AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      run: |
+        scp -i ${{ secrets.EC2_KEY }} -r ./config-example ec2-user@your-ec2-instance:/path/to/your/app
+        ssh -i ${{ secrets.EC2_KEY }} ec2-user@your-ec2-instance "cd /path/to/your/app && ./deploy.sh"
